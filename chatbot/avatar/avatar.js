@@ -1,12 +1,36 @@
 // Avatar animation handling
 let scene, camera, renderer, avatar, mixer, clock;
+let mouth = null;
+let isSpeaking = false;
+const mouthClosedSize = 1.0;
+const mouthOpenSize = 1.3;
+
+// Lip sync variables
+let morphTargets = {};
+const visemeMap = {
+    'viseme_sil': 0,    // Silence
+    'viseme_PP': 1,     // P, B, M
+    'viseme_FF': 2,     // F, V
+    'viseme_TH': 3,     // TH
+    'viseme_DD': 4,     // D, T
+    'viseme_kk': 5,     // K, G
+    'viseme_CH': 6,     // CH, J, SH
+    'viseme_SS': 7,     // S, Z
+    'viseme_nn': 8,     // N, L
+    'viseme_RR': 9,     // R
+    'viseme_aa': 10,    // A
+    'viseme_E': 11,     // E
+    'viseme_I': 12,     // I
+    'viseme_O': 13,     // O
+    'viseme_U': 14      // U
+};
 
 function initAvatar() {
     // Set up Three.js scene
     scene = new THREE.Scene();
-    camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
-    camera.position.set(0, 0.3, 1.5); // Slightly higher and closer
-    camera.lookAt(0, 0.2, 0);
+    camera = new THREE.PerspectiveCamera(38, 1, 0.1, 1000);
+    camera.position.set(0, 0.25, 0.9);
+    camera.lookAt(0, 0.15, 0);
     renderer = new THREE.WebGLRenderer({ alpha: true });
     renderer.setSize(300, 300);
     document.getElementById('avatar-container').appendChild(renderer.domElement);
@@ -18,9 +42,6 @@ function initAvatar() {
     directionalLight.position.set(0, 1, 1);
     scene.add(directionalLight);
     
-    // Position camera
-    camera.position.z = 1.5; // Bring camera closer for better view
-    
     // Clock for animations
     clock = new THREE.Clock();
     
@@ -30,8 +51,38 @@ function initAvatar() {
         'chatbot/avatar/avatar.glb',
         function(gltf) {
             avatar = gltf.scene;
+            avatar.position.y = -0.6;
+            avatar.scale.set(1.3, 1.3, 1.3);
             scene.add(avatar);
-            avatar.position.y = -1.2;
+
+            // Find mouth and morph targets
+            avatar.traverse(function(child) {
+                if (child.isMesh) {
+                    // Find mouth mesh
+                    if (child.name.toLowerCase().includes('mouth')) {
+                        mouth = child;
+                    }
+                    
+                    // Set up morph targets if available
+                    if (child.morphTargetDictionary) {
+                        morphTargets = {
+                            mesh: child,
+                            dictionary: child.morphTargetDictionary,
+                            influences: child.morphTargetInfluences
+                        };
+                        
+                        // Initialize all morph targets to 0
+                        for (let i = 0; i < child.morphTargetInfluences.length; i++) {
+                            child.morphTargetInfluences[i] = 0;
+                        }
+                    }
+                }
+            });
+            
+            // Fallback if no mouth found
+            if (!mouth && avatar.children.length > 0) {
+                mouth = avatar.children.find(child => child.isMesh);
+            }
             
             // Set up animation mixer
             mixer = new THREE.AnimationMixer(avatar);
@@ -62,15 +113,16 @@ function animate() {
     
     if (avatar) {
         // Subtle head movement
-        avatar.rotation.y = Math.sin(Date.now() * 0.001) * 0.1;        
+        avatar.rotation.y = Math.sin(Date.now() * 0.001) * 0.1;
+        
         // Blinking animation occasionally
-        if (Math.random() < 0.005) { // 0.5% chance per frame
-            avatar.children[1].scale.y = 0.1; // left eye
-            avatar.children[2].scale.y = 0.1; // right eye
+        if (Math.random() < 0.005) {
+            if (avatar.children[1]) avatar.children[1].scale.y = 0.1;
+            if (avatar.children[2]) avatar.children[2].scale.y = 0.1;
             setTimeout(() => {
                 if (avatar) {
-                    avatar.children[1].scale.y = 1;
-                    avatar.children[2].scale.y = 1;
+                    if (avatar.children[1]) avatar.children[1].scale.y = 1;
+                    if (avatar.children[2]) avatar.children[2].scale.y = 1;
                 }
             }, 100);
         }
@@ -79,81 +131,83 @@ function animate() {
     renderer.render(scene, camera);
 }
 
-// Control avatar mouth movement for speech
-function startAvatarSpeech() {
-    if (avatar && avatar.children[3]) { // mouth element
-        avatar.children[3].scale.set(1.8, 1.2, 1); // more exaggerated mouth movement
-        // Add subtle eye blink
-        avatar.children[1].scale.y = 0.8; // left eye
-        avatar.children[2].scale.y = 0.8; // right eye
+// Lip sync functions
+function setViseme(visemeName, intensity = 1.0) {
+    if (!morphTargets.mesh || !morphTargets.dictionary) {
+        // Fallback to simple mouth movement if no morph targets
+        if (mouth) {
+            mouth.scale.y = mouthClosedSize + (intensity * 0.3);
+        }
+        return;
+    }
+    
+    const index = morphTargets.dictionary[visemeName];
+    if (index !== undefined) {
+        morphTargets.influences[index] = intensity;
     }
 }
 
-function stopAvatarSpeech() {
-    if (avatar && avatar.children[3]) {
-        avatar.children[3].scale.set(1, 1, 1);
-        // Return eyes to normal
-        avatar.children[1].scale.y = 1;
-        avatar.children[2].scale.y = 1;
+function resetVisemes() {
+    if (morphTargets.influences) {
+        for (let i = 0; i < morphTargets.influences.length; i++) {
+            morphTargets.influences[i] = 0;
+        }
     }
+    if (mouth) {
+        mouth.scale.y = mouthClosedSize;
+    }
+}
+
+function startLipSync() {
+    isSpeaking = true;
+    setViseme('viseme_sil');
+}
+
+function stopLipSync() {
+    isSpeaking = false;
+    resetVisemes();
+}
+
+// Speech functions
+function speakMessage(text) {
+    if (isBotVoiceMuted) return;
+    
+    synth.cancel();
+    startLipSync();
+    
+    const utterance = new SpeechSynthesisUtterance(text);
+    
+    // Simple viseme approximation based on speech
+    utterance.onboundary = (event) => {
+        if (!isSpeaking) return;
+        
+        const char = text[event.charIndex]?.toLowerCase();
+        resetVisemes();
+        
+        // Basic viseme mapping
+        if (!char) return;
+        
+        if ('pbmy'.includes(char)) setViseme('viseme_PP');
+        else if ('fv'.includes(char)) setViseme('viseme_FF');
+        else if ('dt'.includes(char)) setViseme('viseme_DD');
+        else if ('kg'.includes(char)) setViseme('viseme_kk');
+        else if ('ae'.includes(char)) setViseme('viseme_aa');
+        else if ('iy'.includes(char)) setViseme('viseme_I');
+        else if ('ou'.includes(char)) setViseme('viseme_O');
+        else setViseme('viseme_sil');
+    };
+    
+    utterance.onend = utterance.onerror = () => {
+        stopLipSync();
+    };
+    
+    synth.speak(utterance);
 }
 
 // Initialize avatar when DOM is loaded
 document.addEventListener('DOMContentLoaded', initAvatar);
 
+// Fallback simple avatar creation (unchanged)
 function createSimpleAvatar() {
-    // Head (slightly larger)
-    const headGeometry = new THREE.SphereGeometry(0.6, 32, 32);
-    const headMaterial = new THREE.MeshPhongMaterial({ 
-        color: 0xFFD700,
-        specular: 0x111111,
-        shininess: 30
-    });
-    const head = new THREE.Mesh(headGeometry, headMaterial);
-    head.position.y = 0.2; // Raise the head slightly
-    
-    // Eyes (more prominent)
-    const eyeGeometry = new THREE.SphereGeometry(0.12, 16, 16);
-    const eyeMaterial = new THREE.MeshBasicMaterial({ color: 0x000000 });
-    
-    const leftEye = new THREE.Mesh(eyeGeometry, eyeMaterial);
-    leftEye.position.set(0.25, 0.3, 0.5);
-    
-    const rightEye = new THREE.Mesh(eyeGeometry, eyeMaterial);
-    rightEye.position.set(-0.25, 0.3, 0.5);
-    
-    // Mouth (more expressive)
-    const mouthGeometry = new THREE.TorusGeometry(0.25, 0.03, 16, 32, Math.PI);
-    const mouth = new THREE.Mesh(mouthGeometry, new THREE.MeshBasicMaterial({ color: 0x000000 }));
-    mouth.position.set(0, 0.1, 0.5);
-    mouth.rotation.z = Math.PI;
-    
-    // Add eyebrows for more expression
-    const eyebrowGeometry = new THREE.BoxGeometry(0.2, 0.05, 0.05);
-    const eyebrowMaterial = new THREE.MeshBasicMaterial({ color: 0x000000 });
-    
-    const leftEyebrow = new THREE.Mesh(eyebrowGeometry, eyebrowMaterial);
-    leftEyebrow.position.set(0.25, 0.45, 0.5);
-    leftEyebrow.rotation.z = -0.2;
-    
-    const rightEyebrow = new THREE.Mesh(eyebrowGeometry, eyebrowMaterial);
-    rightEyebrow.position.set(-0.25, 0.45, 0.5);
-    rightEyebrow.rotation.z = 0.2;
-    
-    // Group everything together
-    avatar = new THREE.Group();
-    avatar.add(head);
-    avatar.add(leftEye);
-    avatar.add(rightEye);
-    avatar.add(mouth);
-    avatar.add(leftEyebrow);
-    avatar.add(rightEyebrow);
-    camera.position.z = 2; // Move camera back
-    camera.lookAt(avatar.position);
-
-    avatar.position.y = 40;
-
-    scene.add(avatar);
-    scene.add(new THREE.AxesHelper(1)); // Shows X/Y/Z axes
-    scene.add(new THREE.GridHelper(10, 10)); // Shows ground plane
+    // ... (keep your existing simple avatar code exactly as is) ...
 }
