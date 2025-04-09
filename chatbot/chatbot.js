@@ -9,7 +9,7 @@ const knowledgeBase = [
         answer: "We're open Monday to Friday, 9 AM to 5 PM."
     },
     {
-        question: "where are you located",
+        question: "where are you  located",
         answer: "Our headquarters is at 123 Main Street, Anytown."
     },
     {
@@ -100,18 +100,26 @@ function speakMessage(text) {
     
     synth.cancel(); // Cancel any ongoing speech
 
+    // Use the avatar's lip sync function if available
+    if (typeof window.speakTextWithLipSync === 'function') {
+        window.speakTextWithLipSync(text);
+        return; // Let avatar.js handle the speech completely
+    }
+
+    // Fallback if avatar system isn't loaded
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.rate = 0.9;
     utterance.pitch = 1;
     utterance.volume = 1;
 
-    // Try to select a natural-sounding voice
+    // Voice selection
     const voices = synth.getVoices();
     if (voices.length > 0) {
         const preferredVoice = voices.find(v => v.lang.includes('en')) || voices[0];
         utterance.voice = preferredVoice;
     }
 
+    // Basic mouth movement triggers (if no avatar system)
     utterance.onstart = () => {
         if (typeof startAvatarSpeech === 'function') {
             startAvatarSpeech();
